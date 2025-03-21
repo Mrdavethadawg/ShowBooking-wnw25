@@ -58,6 +58,10 @@ class WW_Registration_Manager {
 
         add_action('wp_enqueue_scripts', array($this, 'enqueue_frontend_assets'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_assets'));
+
+        // Add these new AJAX actions
+        add_action('wp_ajax_check_email_exists', array($this, 'check_email_exists'));
+        add_action('wp_ajax_nopriv_check_email_exists', array($this, 'check_email_exists'));
     }
 
     public static function instance() {
@@ -246,6 +250,15 @@ JS;
         ob_start();
         ?>
         <div class="container my-5">
+            <?php
+            // Add this error message handling at the top of the form
+            if (isset($_GET['registration_error']) && $_GET['registration_error'] === 'email_exists') {
+                echo '<div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        This email address has already been registered for this category.
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>';
+            }
+            ?>
             <div id="registration-alerts"></div>
             <form class="mb-5" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="ww_handle_form">
@@ -356,6 +369,8 @@ JS;
                 var email = $(this).val();
                 var category = '<?php echo esc_js($cat); ?>';
                 
+                if (!email) return; // Don't check if email is empty
+                
                 $.ajax({
                     url: '<?php echo admin_url('admin-ajax.php'); ?>',
                     type: 'POST',
@@ -365,12 +380,29 @@ JS;
                         category: category
                     },
                     success: function(response) {
+                        // Remove any existing alerts
+                        $('#registration-alerts').empty();
+                        
                         if(response.exists) {
-                            alert('This email has already been registered for this category.');
+                            // Add Bootstrap alert instead of using alert()
+                            $('#registration-alerts').html(
+                                '<div class="alert alert-warning alert-dismissible fade show" role="alert">' +
+                                'This email has already been registered for this category.' +
+                                '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>' +
+                                '</div>'
+                            );
                             $('button[type="submit"]').prop('disabled', true);
                         } else {
                             $('button[type="submit"]').prop('disabled', false);
                         }
+                    },
+                    error: function() {
+                        $('#registration-alerts').html(
+                            '<div class="alert alert-danger alert-dismissible fade show" role="alert">' +
+                            'Error checking email. Please try again.' +
+                            '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>' +
+                            '</div>'
+                        );
                     }
                 });
             });
@@ -1228,6 +1260,22 @@ JS;
         echo "</div>";
     }
     
+    public function check_email_exists() {
+        $email = sanitize_email($_POST['email']);
+        $category = sanitize_key($_POST['category']);
+        
+        global $wpdb;
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table_name} 
+            WHERE email = %s 
+            AND category = %s 
+            AND status NOT IN ('rejected', 'cancelled')",
+            $email,
+            $category
+        ));
+        
+        wp_send_json(array('exists' => (bool)$exists));
+    }
 }
 
 WW_Registration_Manager::instance();
